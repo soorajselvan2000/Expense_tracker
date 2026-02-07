@@ -1,4 +1,5 @@
-const TOKEN = "" //place the token here
+const TOKEN = ""
+const ALLOWED_CHAT_ID = "";
 
 function doPost(e) {
 
@@ -8,9 +9,18 @@ function doPost(e) {
   const data = JSON.parse(e.postData.contents);
   if (!data.message || !data.message.text) return;
 
-  const chatId = data.message.chat.id;
+  const chatId = data.message.chat.id.toString();
   const text = data.message.text;
   const name = data.message.from.first_name || "User";
+
+  // 🔒 BOT PROTECTION (FIRST!)
+  if (chatId !== ALLOWED_CHAT_ID) {
+    sendMessage(
+      chatId,
+      "🚫 You are not permitted to use this bot 🙂\nThank you"
+    );
+    return;
+  }
 
   const props = PropertiesService.getUserProperties();
   const state = props.getProperty(chatId);
@@ -20,7 +30,90 @@ function doPost(e) {
   /* ================= START ================= */
 
   if (text === "/start") {
+    props.deleteProperty(chatId); // reset flow
     sendMainKeyboard(chatId, `Hi ${name} 👋\nChoose an option:`);
+    return;
+  }
+
+// 4️⃣ ENTER CALCULATOR MODE
+  if (text === "🧮 Calculator") {
+    props.setProperty(chatId, "CALCULATOR");
+    sendMessage(
+      chatId,
+      "🧮 Calculator Mode\n\n" +
+      "Type calculation:\n" +
+      "100 + 200\n" +
+      "(500 + 300) * 2\n\n" +
+      "❌ Cancel to exit"
+    );
+    return;
+  }
+
+// 5️⃣ CALCULATOR MODE (🔥 THIS MUST BE HERE)
+  if (state === "CALCULATOR") {
+
+    // prevent buttons from breaking it
+    if (text === "🧮 Calculator") return;
+
+    try {
+      if (!/^[0-9+\-*/().\s]+$/.test(text)) {
+        sendMessage(chatId, "❌ Invalid expression");
+        return;
+      }
+
+      const result = Function("return " + text)();
+
+      sendMessage(
+        chatId,
+        `🧮 Result\n\n${text} = ${result}`
+      );
+    } catch (err) {
+      sendMessage(chatId, "❌ Calculation error");
+    }
+
+    return;
+  }
+
+  if (text === "❌ Cancel") {
+    props.deleteProperty(chatId); // clear flow
+    sendMainKeyboard(chatId, "❌ Action cancelled.\nBack to main menu:");
+    return;
+  }
+
+  if (text === "⬅️ Back") {
+
+    const state = props.getProperty(chatId);
+
+    switch (state) {
+      case "MONTH":
+        props.setProperty(chatId, "YEAR");
+        sendYearKeyboard(chatId);
+        break;
+
+      case "DAY":
+        props.setProperty(chatId, "MONTH");
+        sendMonthKeyboard(chatId);
+        break;
+
+      case "CATEGORY":
+        props.setProperty(chatId, "DAY");
+        sendDayKeyboard(chatId);
+        break;
+
+      case "DESCRIPTION":
+        props.setProperty(chatId, "CATEGORY");
+        sendCategoryKeyboard(chatId);
+        break;
+
+      case "AMOUNT":
+        props.setProperty(chatId, "DESCRIPTION");
+        sendMessage(chatId, "📝 Enter Description\nExample: At Trivandrum");
+        break;
+
+      default:
+        props.deleteProperty(chatId);
+        sendMainKeyboard(chatId, "Back to main menu:");
+    }
     return;
   }
 
@@ -88,10 +181,16 @@ function doPost(e) {
     return;
   }
 
+  if (text === "📅 Monthly Summary") {
+    sendMonthlySummaryText(chatId);
+    return;
+  }
+
+
   // 💾 Savings
   if (text === "💾 Savings") {
 
-    const dashboard = ss.getSheetByName("Dashboard_New");
+    const dashboard = ss.getSheetByName("Dashboard");
     const savings = dashboard.getRange("I4").getValue();
 
     sendMessage(chatId, `💾 Savings\n₹${savings}`);
@@ -203,7 +302,10 @@ function sendMessage(chatId, text) {
 
 function sendMainKeyboard(chatId, text) {
   sendCustomKeyboard(chatId, text, [
+    [{ text: "/start" }],
     [{ text: "📝 New Entry" }],
+    [{ text: "🧮 Calculator" }],
+    [{ text: "📅 Monthly Summary" }],   // ✅ NEW
     [{ text: "📊 This Month Summary" }],
     [{ text: "📷 Dashboard Snapshot" }],
     [{ text: "💰 Total Expense" }, { text: "🎁 Cashback" }],
@@ -212,20 +314,29 @@ function sendMainKeyboard(chatId, text) {
 }
 
 function sendYearKeyboard(chatId) {
-  sendCustomKeyboard(chatId, "📅 Choose Year", [
-    [{ text: "2024" }, { text: "2025" }],
-    [{ text: "2026" }, { text: "2027" }]
-  ]);
+  sendCustomKeyboard(
+    chatId,
+    "📅 Choose Year",
+    addCancelRow([
+      [{ text: "2024" }, { text: "2025" }],
+      [{ text: "2026" }, { text: "2027" }]
+    ])
+  );
 }
 
 function sendMonthKeyboard(chatId) {
-  sendCustomKeyboard(chatId, "📆 Choose Month", [
-    [{ text: "Jan" }, { text: "Feb" }, { text: "Mar" }],
-    [{ text: "Apr" }, { text: "May" }, { text: "Jun" }],
-    [{ text: "Jul" }, { text: "Aug" }, { text: "Sep" }],
-    [{ text: "Oct" }, { text: "Nov" }, { text: "Dec" }]
-  ]);
+  sendCustomKeyboard(
+    chatId,
+    "📆 Choose Month",
+    addNavRows([
+      [{ text: "Jan" }, { text: "Feb" }, { text: "Mar" }],
+      [{ text: "Apr" }, { text: "May" }, { text: "Jun" }],
+      [{ text: "Jul" }, { text: "Aug" }, { text: "Sep" }],
+      [{ text: "Oct" }, { text: "Nov" }, { text: "Dec" }]
+    ])
+  );
 }
+
 
 function sendDayKeyboard(chatId) {
   const rows = [];
@@ -368,4 +479,76 @@ function sendDashboardSnapshot(chatId) {
     method: "post",
     payload: payload
   });
+}
+
+function addCancelRow(keyboard) {
+  keyboard.push([{ text: "❌ Cancel" }]);
+  return keyboard;
+}
+
+function addNavRows(keyboard) {
+  keyboard.push([{ text: "⬅️ Back" }]);
+  keyboard.push([{ text: "❌ Cancel" }]);
+  return keyboard;
+}
+
+function sendMonthlySummaryText(chatId) {
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const summary = ss.getSheetByName("Monthly_Summary");
+  const dashboard = ss.getSheetByName("Dashboard");
+
+  if (!summary || !dashboard) {
+    sendMessage(chatId, "❌ Required sheet not found");
+    return;
+  }
+
+  const month = summary.getRange("B1").getDisplayValue();
+  const year = summary.getRange("B2").getDisplayValue();
+
+  const lastRow = summary.getLastRow();
+  if (lastRow < 5) {
+    sendMessage(chatId, "ℹ️ No data available for this month");
+    return;
+  }
+
+  const data = summary.getRange(5, 1, lastRow - 4, 4).getValues();
+
+  let message =
+    `📅 MONTHLY SUMMARY\n` +
+    `${month} ${year}\n` +
+    `━━━━━━━━━━━━━━━━━━\n\n`;
+
+  for (let i = 0; i < data.length; i++) {
+    const [category, total, budget, status] = data[i];
+    if (!category || total === 0) continue;
+
+    let icon = "🟢";
+    if (status.includes("Over")) icon = "🔴";
+    else if (status.includes("Near")) icon = "🟡";
+
+    message +=
+      `${icon} ${category}\n` +
+      `Spent: ₹${Number(total).toFixed(2)} / Budget: ₹${Number(budget).toFixed(2)}\n` +
+      `Status: ${status}\n\n`;
+
+    if (message.length > 3500) {
+      message += "…\n(Truncated)";
+      break;
+    }
+  }
+
+  const totalExpense = summary.getRange("B21").getDisplayValue();
+  const salary = dashboard.getRange("H4").getDisplayValue();
+  const savings = dashboard.getRange("I4").getDisplayValue();
+  var icon = `/-`
+
+  message +=
+    `━━━━━━━━━━━━━━━━━━\n` +
+    `💸 TOTAL EXPENSE : ${totalExpense} ${icon}\n` +
+    `💰 TOTAL SALARY  : ${salary} ${icon}\n` +
+    `💾 SAVINGS       : ${savings} ${icon}\n\n` +
+    `🟢 Safe • 🟡 Near Limit • 🔴 Over Budget`;
+
+  sendMessage(chatId, message);
 }
